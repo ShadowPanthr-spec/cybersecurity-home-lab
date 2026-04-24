@@ -6,14 +6,16 @@
 
 ---
 
-## Hardware Inventory
+## Hardware Overview
 
-| Device | Model | Specs | Role |
-|---|---|---|---|
-| Primary Laptop | ASUS ZenBook 14 | Intel Core i7-1165G7 @ 2.80GHz, Windows 11 Home, 958GB storage (270GB used) | Main workstation, research, Hack the Box |
-| Lab Machine | HP Compaq dc5750 | 32-bit architecture, 73.3GB HDD | Linux lab server, network monitoring |
-| Primary Router | TP-Link Archer AXE75 | Wi-Fi 6, dual-band, gigabit ports | ISP gateway, living room — hosts home & IoT networks |
-| Secondary Router | TP-Link ER605 | Wi-Fi 6, dual-band, gigabit ports | Office router (double NAT) — hosts lab & bedroom IoT networks |
+| Role | Category | Purpose |
+|---|---|---|
+| Primary Laptop | Modern laptop, Windows 11 | Main workstation, research, Hack the Box |
+| Lab Machine | Legacy desktop, repurposed | Linux lab server, network monitoring |
+| Primary Router | Wi-Fi 6 capable home router | ISP gateway — hosts home & IoT networks |
+| Secondary Router | Business-grade wired router | Office router (double NAT) — hosts lab & bedroom IoT networks |
+
+> Specific hardware models and specifications are intentionally omitted from this documentation.
 
 ---
 
@@ -33,150 +35,142 @@ The project is structured in three phases:
 
 ### Design Rationale
 
-The home lab network uses a **double NAT** topology with two TP-Link routers and multiple VLANs. This design was driven by three requirements:
+The home lab uses a **double NAT** topology with two routers and multiple VLANs. This architecture was not chosen arbitrarily — it emerged from three concrete requirements that shaped every design decision.
 
-**Physical Connectivity Constraint:** The living room and office are separated by a bathroom wall that significantly degrades Wi-Fi signal quality. Running a single router to cover both rooms was not viable, so the TP-Link ER605 in the office is connected to the TP-Link Archer AXE75 in the living room via a wired WAN uplink. This creates a natural double NAT boundary.
+**Physical Connectivity Constraint:** The living room and office are separated by a structural wall that significantly degrades Wi-Fi signal quality. Running a single router across both rooms was not viable. The solution was to place the Primary Router in the living room (the ISP gateway) and connect the Secondary Router in the office via a wired WAN uplink. This physical necessity creates a natural double NAT boundary, which turned out to be a security advantage as much as a connectivity solution.
 
-**Security Segmentation:** Cybersecurity lab work requires strict isolation from household devices. Running attack tools, vulnerable VMs, and network scanners on the same broadcast domain as general household devices or smart home kit presents unnecessary risk. The double NAT boundary between routers means lab traffic is fully separated from the household network at the network layer, not just at the VLAN level.
+**Security Segmentation:** Cybersecurity lab work requires strict isolation from household devices. Running attack tools, vulnerable virtual machines, and network scanners on the same broadcast domain as general household devices or smart home kit presents unnecessary risk — both to household devices and to the integrity of lab experiments. The double NAT boundary means lab traffic is separated from the household network at the network layer, not just at the VLAN level. Even a misconfigured VLAN rule on the Secondary Router cannot expose lab traffic to the home network, because the NAT boundary at the Primary Router acts as a second independent barrier.
 
-**Household Usability:** The primary household user (mother) and general home devices need a simple, stable network that is completely unaffected by lab activity. Placing the Archer AXE75 as the primary router in the living room ensures all household traffic routes through a clean, unmodified path to the ISP with no exposure to lab VLANs.
+**Household Usability:** The primary household user needs a simple, stable network that is completely unaffected by lab activity. Placing the Primary Router as the household gateway ensures all household traffic routes through a clean, unmodified path to the ISP. Lab activity on the Secondary Router is entirely invisible to it.
 
 ---
 
 ### Double NAT Topology — Visual Diagram
 
 ```
-                         INTERNET
-                             |
-                        [ ISP Modem ]
-                             |
+                             INTERNET
+                                 |
+                           [ ISP Modem ]
+                                 |
                     ┌────────────────────────┐
-                    │  TP-Link Archer AXE75  │   ← WAN: ISP IP
-                    │      (Living Room)     │     LAN: 192.168.1.0/24
+                    │     PRIMARY ROUTER     │   ← WAN: Public IP (from ISP)
+                    │      (Living Room)     │     LAN: Home address space
                     │                        │
-                    │  VLAN 10 ─────────────────── Home Network      192.168.1.0/24
-                    │  VLAN 20 ─────────────────── IoT Network       192.168.20.0/24
+                    │  Segment A ───────────────── Home Network
+                    │  Segment B ───────────────── Home IoT Network
                     │                        │
                     └──────────┬─────────────┘
                                │
                        Wired WAN Uplink
-                    (Archer AXE75 LAN port →
-                       ER605 WAN port)
+                  (Primary Router LAN port →
+                   Secondary Router WAN port)
                                │
                     ┌────────────────────────┐
-                    │    TP-Link ER605        │   ← WAN: 192.168.1.x (NAT'd by Archer AXE75)
-                    │        (Office)         │     LAN: 10.0.0.0/8
+                    │    SECONDARY ROUTER    │   ← WAN: Address leased from Primary Router
+                    │        (Office)        │     LAN: Separate address space
                     │                        │
-                    │  VLAN 30 ─────────────────── Cybersecurity Lab  10.0.30.0/24
-                    │  VLAN 40 ─────────────────── Bedroom IoT        10.0.40.0/24
+                    │  Segment C ───────────────── Cybersecurity Lab Network
+                    │  Segment D ───────────────── Bedroom IoT Network
                     │                        │
                     └────────────────────────┘
 
-  ┌──────────────────────────────────────────────────────────┐
-  │  KEY: Each arrow (→) represents a NAT boundary.          │
-  │  Traffic from the Lab VLAN passes through TWO NAT layers │
-  │  before reaching the internet — once at the ER605        │
-  │  and once at the Archer AXE75. Lab devices cannot        │
-  │  initiate connections to any Archer AXE75-hosted VLAN    │
-  │  by design.                                              │
-  └──────────────────────────────────────────────────────────┘
+  ┌────────────────────────────────────────────────────────────────┐
+  │  KEY: Two NAT boundaries exist in this topology.               │
+  │  Traffic originating in the Lab Network (Segment C) must       │
+  │  traverse NAT at the Secondary Router, then NAT again at       │
+  │  the Primary Router before reaching the internet.              │
+  │  Lab devices have no initiated-path to the home network        │
+  │  segments (A/B) — the Primary Router's NAT boundary blocks     │
+  │  all unsolicited inbound traffic from the office by design.    │
+  └────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### Network Segments & VLAN Allocation
+### Logical Network Segments
 
-| Router | VLAN ID | Network Name | Subnet | Gateway | Purpose |
-|---|---|---|---|---|---|
-| Archer AXE75 (Living Room) | VLAN 10 | Home Network | 192.168.1.0/24 | 192.168.1.1 | General household use — primary user (mum), shared devices |
-| Archer AXE75 (Living Room) | VLAN 20 | Home IoT | 192.168.20.0/24 | 192.168.20.1 | Smart home devices in the living room / common areas |
-| ER605 (Office) | VLAN 30 | Cybersecurity Lab | 10.0.30.0/24 | 10.0.30.1 | Lab machines, VMs, attack/defence practice, monitoring tools |
-| ER605 (Office) | VLAN 40 | Bedroom IoT | 10.0.40.0/24 | 10.0.40.1 | Bedroom smart devices (Samsung Smart TV, etc.) — isolated from lab |
+The network is divided into four logical segments across two routers. Rather than documenting specific subnet addresses, the design intent for each segment is described below.
 
-> **Why separate IoT VLANs on each router?**  
-> Smart home devices are distributed across rooms. Keeping living room IoT on the Archer AXE75 and bedroom IoT on the ER605 means each router manages only the devices physically nearby, reducing cross-router traffic and keeping IoT devices isolated from both household and lab traffic regardless of which router they connect through.
+| Router | Segment | Network Name | Purpose |
+|---|---|---|---|
+| Primary Router | A | Home Network | General household use — shared devices, primary household user |
+| Primary Router | B | Home IoT | Smart home devices in common areas — isolated from household computers |
+| Secondary Router | C | Cybersecurity Lab | Lab machines, VMs, attack/defence practice, network monitoring |
+| Secondary Router | D | Bedroom IoT | Smart devices in the bedroom — isolated from lab traffic |
 
----
+The two routers intentionally use **distinct, non-overlapping private address spaces**. This makes it immediately obvious in logs, packet captures, and monitoring output which router and segment a packet originates from — without needing to consult documentation. This is a deliberate operational choice to reduce cognitive overhead during active lab sessions.
 
-### Device Allocation by Network
+#### Why Two Separate IoT Segments?
 
-#### Archer AXE75 — VLAN 10: Home Network (192.168.1.0/24)
+Smart home devices are physically distributed across rooms. Rather than consolidating all IoT onto a single VLAN, each router manages the IoT devices in its physical area. This approach:
 
-| Device | Type | Assigned IP / Range |
-|---|---|---|
-| Mother's phone / laptop | Personal devices | DHCP: 192.168.1.50–192.168.1.150 |
-| Shared household devices | General use | DHCP: 192.168.1.50–192.168.1.150 |
-| TP-Link ER605 WAN port | Router uplink | Static: 192.168.1.2 |
-
-#### Archer AXE75 — VLAN 20: Home IoT (192.168.20.0/24)
-
-| Device | Type | Assigned IP / Range |
-|---|---|---|
-| Living room smart devices | IoT (lights, speakers, etc.) | DHCP: 192.168.20.50–192.168.20.150 |
-
-#### ER605 — VLAN 30: Cybersecurity Lab (10.0.30.0/24)
-
-| Device | Type | Assigned IP / Range |
-|---|---|---|
-| ASUS ZenBook 14 (Primary Laptop) | Main workstation | Static: 10.0.30.10 |
-| HP Compaq dc5750 (antiX Linux) | Lab server / monitor | Static: 10.0.30.20 |
-| Virtual Machines (future) | Attack / target VMs | DHCP: 10.0.30.100–10.0.30.200 |
-
-#### ER605 — VLAN 40: Bedroom IoT (10.0.40.0/24)
-
-| Device | Type | Assigned IP / Range |
-|---|---|---|
-| Samsung Smart TV | Smart TV | Static: 10.0.40.10 |
-| Other bedroom IoT | Smart devices | DHCP: 10.0.40.50–10.0.40.150 |
+- Eliminates cross-router IoT traffic for devices that only need local connectivity
+- Ensures IoT devices remain isolated regardless of which router they happen to connect through
+- Limits the blast radius of a compromised smart device — it can only reach other IoT devices on its own segment, not household computers or lab machines
 
 ---
 
-### IP Addressing Summary
+### Logical Device Placement
 
-| Block | Router | Scope |
-|---|---|---|
-| 192.168.1.0/24 | Archer AXE75 | Primary home network (VLAN 10) |
-| 192.168.20.0/24 | Archer AXE75 | Home IoT network (VLAN 20) |
-| 10.0.30.0/24 | ER605 | Cybersecurity lab (VLAN 30) |
-| 10.0.40.0/24 | ER605 | Bedroom IoT (VLAN 40) |
+Devices are assigned to segments based on their trust level and function, not their physical location alone.
 
-The ER605 is deliberately assigned to the `10.0.0.0/8` private address space (vs the Archer AXE75's `192.168.x.x`) to make it visually obvious in logs, packet captures, and monitoring output which router and VLAN a device or packet belongs to. This aids in debugging and keeps mental overhead low during lab sessions.
+**Home Network (Segment A — Primary Router)**  
+General-purpose household devices. Any device used by household members for everyday tasks lives here. The Secondary Router's WAN uplink is also assigned an address in this segment — from the Primary Router's perspective, the entire office network is simply one more client device.
+
+**Home IoT (Segment B — Primary Router)**  
+Smart home devices in common areas: lights, speakers, displays, and similar kit. These devices are intentionally isolated from the home network — they can reach the internet, but cannot initiate connections to household computers or each other across segment boundaries.
+
+**Cybersecurity Lab (Segment C — Secondary Router)**  
+The primary workstation and lab machine both reside here. This is the most controlled segment in the network. Traffic from this segment passes through two NAT layers before reaching the internet, and has no routed path to either the home network or IoT segments. Future virtual machines for attack/defence practice will also be assigned addresses in this segment.
+
+**Bedroom IoT (Segment D — Secondary Router)**  
+Smart devices physically located in the bedroom, managed by the Secondary Router. Despite sharing a router with the lab, this segment is isolated from the lab by VLAN segmentation. Smart TV traffic, for example, cannot reach lab machines even though they share the same physical router.
 
 ---
 
 ### Security Properties of the Double NAT Design
 
-The double NAT architecture provides the following security properties:
+This topology provides layered isolation that goes beyond what a single-router VLAN setup can offer.
 
-- **Lab-to-home isolation:** Devices on ER605 VLANs (10.0.x.x) cannot initiate connections to Archer AXE75 VLANs (192.168.x.x) unless explicitly port-forwarded — which is not configured. The NAT boundary at the Archer AXE75 blocks all unsolicited inbound connections from the lab.
-- **Home-to-lab isolation:** Devices on the Archer AXE75's home network (192.168.1.x) have no route to the ER605's internal subnets (10.0.x.x). The ER605 is simply another client on the home network from the Archer AXE75's perspective.
-- **IoT containment:** Both IoT VLANs (VLAN 20 and VLAN 40) are isolated from all other VLANs by VLAN segmentation. Smart devices cannot communicate with lab machines or household computers.
-- **Lab traffic double-NAT'd to internet:** Outbound lab traffic is NAT translated at the ER605 (to 192.168.1.x) and again at the Archer AXE75 (to the ISP-assigned public IP), providing an additional layer of address obfuscation.
+- **Lab-to-home isolation:** Devices in Segments C and D cannot initiate connections to Segments A or B. The Primary Router's NAT boundary blocks all unsolicited inbound traffic originating from the office network. No port forwarding rules are configured to bridge this boundary.
 
----
+- **Home-to-lab isolation:** Devices in Segment A have no routing knowledge of the Secondary Router's internal segments. The Secondary Router appears as a single client device to the Primary Router — its internal network topology is entirely opaque.
 
-### Known Limitations & Future Improvements
+- **IoT containment:** Both IoT segments (B and D) are isolated from all other segments by VLAN enforcement. A compromised smart device cannot communicate with lab machines, household computers, or IoT devices on the other router.
 
-- **No IDS/IPS at the NAT boundary** — a future improvement would be to configure Snort or Suricata on the HP Compaq dc5750 as an inline sensor on VLAN 30.
-- **No inter-VLAN routing logging** — VLAN boundary crossing should be logged. This is planned for Phase 2.
-- **Double NAT complicates inbound connectivity** — any services that require inbound port forwarding (e.g., reverse shells in CTF challenges) require double port-forward configuration (on both routers). This is an acceptable trade-off for the isolation benefits.
-- **ER605 WAN uplink is on the home network VLAN** — in the current design, the ER605's WAN IP (192.168.1.2) sits on VLAN 10 alongside household devices. A dedicated WAN VLAN on the Archer AXE75 for the uplink would be cleaner but is not currently required.
+- **Double NAT obfuscation:** Outbound lab traffic is translated twice before reaching the internet — once at the Secondary Router (replacing lab addresses with an address in the Primary Router's space), and again at the Primary Router (replacing that address with the ISP-assigned public IP). This provides an additional layer of address obfuscation for outbound lab activity.
+
+- **Defence-in-depth:** The double NAT design means two independent security boundaries must both fail before lab traffic could reach household devices. A single misconfigured VLAN rule, firewall exception, or routing table entry is insufficient to bridge the isolation gap.
 
 ---
 
-## Phase 1 — Linux Installation on HP Compaq dc5750 ✅ COMPLETED
+### Known Trade-offs & Future Improvements
+
+Every design involves trade-offs. The following limitations are accepted consciously and documented for future resolution.
+
+- **No IDS/IPS at the NAT boundary** — traffic crossing between the two routers is not currently inspected. A future improvement is to deploy an inline intrusion detection sensor (e.g., Snort or Suricata) on the lab machine to monitor Segment C traffic.
+
+- **No inter-VLAN boundary logging** — traffic that attempts to cross segment boundaries is silently dropped rather than logged. Adding logging to boundary-crossing attempts is planned for Phase 2.
+
+- **Double NAT complicates inbound connections** — any use case requiring inbound connectivity (e.g., receiving reverse shells in CTF exercises) requires port forwarding rules on both routers in sequence. This is an acceptable operational complexity given the isolation benefits.
+
+- **Secondary Router WAN sits in Segment A** — the Secondary Router's WAN-facing address lives in the same segment as household devices on the Primary Router. A dedicated transit segment between the two routers would be architecturally cleaner but is not required at current scale.
+
+---
+
+## Phase 1 — Linux Installation on Lab Machine ✅ COMPLETED
 
 ### Objective
 
-Install a secure, actively maintained Linux distribution on the HP Compaq dc5750 to repurpose it as a lab machine.
+Install a secure, actively maintained Linux distribution on the legacy lab machine to repurpose it as a Linux server and network monitoring node.
 
 ### OS Selection Process
 
-Selecting the right operating system required careful consideration of the hardware's age and architecture limitations. The HP Compaq dc5750 uses a 32-bit processor, which eliminated many modern distributions.
+The lab machine uses a 32-bit processor architecture — a significant constraint that eliminated most modern Linux distributions from consideration.
 
-**Option 1 — Debian:** Debian was the first choice due to its reputation as one of the most secure and stable Linux distributions with excellent long-term support. However, Debian dropped official 32-bit (i386) support after Debian 10 (Buster), making newer versions incompatible with the HP Compaq dc5750's hardware. Eliminated due to architecture incompatibility.
+**Option 1 — Debian:** Debian was the first choice due to its reputation as one of the most secure and stable Linux distributions with excellent long-term support. However, Debian dropped official 32-bit (i386) support after Debian 10 (Buster), making newer versions incompatible with the lab machine's hardware. Eliminated due to architecture incompatibility.
 
-**Option 2 — Devuan:** Devuan is a Debian fork that removes systemd and was considered as an alternative with potentially better support for older hardware. However, it also presented compatibility issues with the HP Compaq dc5750's specific hardware configuration. Eliminated due to hardware compatibility issues.
+**Option 2 — Devuan:** Devuan is a Debian fork that removes systemd and was considered as an alternative with potentially better support for older hardware. However, it also presented compatibility issues with the lab machine's specific hardware configuration. Eliminated due to hardware compatibility issues.
 
 **Option 3 — antiX Linux (Selected):** antiX Linux was chosen as the final option for the following reasons:
 
@@ -191,14 +185,14 @@ Selecting the right operating system required careful consideration of the hardw
 
 | Tool | Purpose | Platform |
 |---|---|---|
-| Rufus | Create bootable USB drive from ISO | ASUS ZenBook 14 (Windows 11) |
-| antiX Linux 5.10.240-antix.1-486-smp | Linux operating system | HP Compaq dc5750 |
-| Windows PowerShell | Hash verification of downloaded ISO | ASUS ZenBook 14 (Windows 11) |
+| Rufus | Create bootable USB drive from ISO | Primary Laptop (Windows 11) |
+| antiX Linux 5.10.240-antix.1-486-smp | Linux operating system | Lab Machine |
+| Windows PowerShell | Hash verification of downloaded ISO | Primary Laptop (Windows 11) |
 
 ### Step-by-Step Process
 
-**Step 1 — Download antiX Linux ISO on ASUS ZenBook 14**  
-Downloaded the antiX Linux ISO file from the official antiX website to the ASUS ZenBook 14 primary laptop.
+**Step 1 — Download antiX Linux ISO on Primary Laptop**  
+Downloaded the antiX Linux ISO file from the official antiX website to the primary laptop.
 
 **Step 2 — Verify ISO Integrity via Hash Check**  
 Before proceeding with installation, the integrity of the downloaded ISO was verified using Windows PowerShell to ensure the file had not been corrupted or tampered with during download. This is a critical security practice.
@@ -210,17 +204,16 @@ Get-FileHash C:\path\to\antix.iso -Algorithm SHA256
 The output hash was compared against the SHA256 hash published on the official antiX download page. They matched, confirming the file was legitimate and unmodified.
 
 **Step 3 — Create Bootable USB Drive**  
-Used Rufus on the ASUS ZenBook 14 to write the verified antiX Linux ISO to a 16GB USB flash drive, creating a bootable installation media.
+Used Rufus on the primary laptop to write the verified antiX Linux ISO to a USB flash drive, creating a bootable installation media.
 
-**Step 4 — Boot HP Compaq dc5750 from USB**  
-Inserted the bootable USB into the HP Compaq dc5750 and configured it to boot from the USB drive. Successfully booted into the antiX Linux live environment.
+**Step 4 — Boot Lab Machine from USB**  
+Inserted the bootable USB into the lab machine and configured it to boot from the USB drive. Successfully booted into the antiX Linux live environment.
 
 **Step 5 — Install antiX Linux to Internal Hard Drive**  
 Ran the antiX installer from the live environment, installing the OS to the internal hard drive. During setup, created a regular user account and set a root password. The installer confirmed the OS was installed to:
 
 - Device: `/dev/sda`
 - Partition: `/dev/sda1`
-- Size: 73.3GB
 
 **Step 6 — Verify Installation**  
 Before rebooting, opened a terminal from the live USB environment and verified the installation using the `lsblk` command, which confirmed antiX was correctly installed and mounted to the appropriate partition.
@@ -292,14 +285,14 @@ GRUB scanned for operating systems, generated a new configuration file, and adde
 
 ### Objective
 
-Configure the HP Compaq dc5750 running antiX Linux as a network monitoring tool and/or server within the home lab environment.
+Configure the lab machine running antiX Linux as a network monitoring node and/or server within the home lab environment.
 
 Planned steps:
-- [ ] Connect HP to Lab VLAN (ER605 VLAN 30 — 10.0.30.0/24)
-- [ ] Assign static IP: 10.0.30.20
+- [ ] Connect lab machine to the Cybersecurity Lab segment on the Secondary Router
+- [ ] Assign a static address within the Lab Network segment
 - [ ] Assess network monitoring tools compatible with antiX (e.g., Wireshark, ntopng, Snort, Suricata)
 - [ ] Install and configure chosen monitoring tools
-- [ ] Define and document the HP's specific role in the lab
+- [ ] Define and document the lab machine's specific role in the network
 
 ---
 
@@ -310,8 +303,8 @@ Planned steps:
 Use the home lab environment for active, hands-on cybersecurity practice to build skills beyond certification knowledge.
 
 Planned steps:
-- [ ] Set up Hack the Box on ASUS ZenBook 14 via browser
-- [ ] Use HP for network traffic analysis during practice sessions
+- [ ] Set up Hack the Box on the primary laptop via browser
+- [ ] Use the lab machine for network traffic analysis during practice sessions
 - [ ] Document all exercises, findings, and lessons learned
 - [ ] Build toward more advanced certifications and practical experience
 
@@ -324,8 +317,6 @@ Planned steps:
 - Hack the Box: https://hackthebox.com
 - CompTIA: https://comptia.org
 - AWS Certification: https://aws.amazon.com/certification
-- TP-Link Archer AXE75: https://www.tp-link.com/us/home-networking/wifi-router/archer-axe75/
-- TP-Link ER605: https://www.tp-link.com/us/business-networking/vpn-router/er605/
 
 ---
 
